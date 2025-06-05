@@ -8,5 +8,6 @@ License: MIT
 Authors: Ben Loveday (EUMETSAT/Innoflair UG), Gary Corlett (EUMETSAT), Hayley Evers-King (EUMETSAT)
 
 Data and jupyternotebooks disposition: 
+https://dataspace.copernicus.eu/
 https://dataspace.copernicus.eu/analyse/jupyterlab
 https://www.sentinel-hub.com/
