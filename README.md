@@ -1,5 +1,14 @@
 
-<img src="https://github.com/user-attachments/assets/eef27875-51c8-44e1-88c3-9b505ae4fcaf" style="width: 150px; height: auto;" alt="Copernicus Logo">
+# Logos
+
+Here are the logos for Anaconda, Jupyter Labs, and Sentinel Hub:
+
+<p align="center">
+  <img src="https://example.com/anaconda_logo.png" width="100" height="100" style="margin-right: 20px;">
+  <img src="https://example.com/jupyter_logo.png" width="100" height="100" style="margin-right: 20px;">
+  <img src="https://example.com/sentinelhub_logo.png" width="100" height="100">
+</p>
+
 
 This github was created with the codes used for the project "Mapping a Mucilage - Algal bloom event in the Northern Adriatic Sea using the Sentinel Constellation, August 2024" for the course Copernicus green solutions
 of the Politecnico of Milan. 
