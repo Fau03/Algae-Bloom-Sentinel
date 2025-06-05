@@ -1,0 +1,61 @@
+import cartopy                       # a library that support mapping
+import glob                          # a library that aids in searching for files
+import matplotlib.pyplot as plt      # a library that support plotting
+import numpy as np                   # a library that provides support for array-based mathematics
+import os                            # a library that allows us access to basic operating system commands
+from shapely.geometry import Polygon # a library that helps us work with shape objects
+import warnings                      # a library that helps us manage warnings
+import xml.etree.ElementTree as ET   # a library that helps us parse XML files
+warnings.filterwarnings('ignore')
+
+# selecting SAFE directories
+SAFE_directories = [
+    os.path.join(os.getcwd(), 'products',
+    'S3A_SL_1_RBT____20220209T220650_20220209T220950_20220211T045404_0179_082_001_0540_MAR_O_NT_004.SEN3'),
+    os.path.join(os.getcwd(), 'products',
+    'S3A_SL_2_WST____20220209T213232_20220209T231332_20220211T074946_6059_081_385______MAR_O_NT_003.SEN3')
+    ]
+
+# selecting SAFE manifest
+SAFE_manifests = []
+for SAFE_directory in SAFE_directories:
+    SAFE_manifests.append(glob.glob(os.path.join(SAFE_directory, 'xfd*.xml'))[0])
+
+polygons = []
+tags = []
+for SAFE_manifest in SAFE_manifests:
+    tags.append(SAFE_manifest.split('/')[-2])
+    tree = ET.parse(SAFE_manifest)
+    root = tree.getroot()
+    polygon =  root.findall('.//gml:posList', {'gml':"http://www.opengis.net/gml"})
+    polygons.append((polygon[0].text))
+
+fig1 = plt.figure(figsize=(10, 10), dpi=300)
+
+for loc, clon, clat in zip([1, 2], [0.0, 180.0], [0.0, 0.0]):
+    m = plt.subplot(1, 2, loc, projection=cartopy.crs.NearsidePerspective(central_longitude=clon, 
+                                                                          central_latitude=clat))
+    m.add_feature(cartopy.feature.LAND, zorder=0, edgecolor='k', facecolor='#5D6D7E')
+    m.set_global()
+
+    gl = m.gridlines(draw_labels = True)
+
+    colours = ['#922B21', '#F39C12']
+    zorders = [2, 1]
+    labels = ['Sentinel-3 SLSTR L1-RBT NRT/NTC L2-WST NRT', 'Sentinel-3 SLSTR L2-WST NTC']
+
+    plots = []
+    reverse = True
+    for polygon, tag, colour, zorder, SAFE_manifest in zip(polygons, tags, colours, zorders, SAFE_manifests):
+        coords = np.asarray(polygon.split(' ')).astype('float')
+        polygon_geom = Polygon(zip((coords[1::2]), coords[0::2]))
+        px = polygon_geom.exterior
+        x, y = px.xy
+        if reverse == True:
+            x = x[::-1]
+            y = y[::-1]
+        p, = plt.fill(x, y, alpha=0.74, fc=colour, ec='k', transform=cartopy.crs.Geodetic(), zorder=zorder)
+        plots.append(p)
+
+plt.legend(plots, labels, loc='lower right', bbox_to_anchor=(0.0, -0.25))
+plt.savefig('1_3_SLSTR_coverage.png', bbox_inches='tight')
