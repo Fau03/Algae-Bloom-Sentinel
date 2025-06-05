@@ -1,0 +1,303 @@
+import os                              # a library that allows us access to basic operating system commands
+import glob                            # a library that helps us search for files
+import eumartools                      # a EUMETSAT library that support working with Sentinel-3 products
+import eumdac                          # a tool that helps us download via the eumetsat/data-store
+import datetime                        # a library that allows us to work with dates and times
+import shutil                          # a library that allows us access to basic operating system commands like copy
+import xarray as xr                    # a library that helps us work efficiently with multi-dimensional arrays
+import matplotlib                      # a library the provides plotting capability
+import matplotlib.pyplot as plt        # a library the provides plotting capability
+import cartopy                         # a library that supports mapping and projection
+import cartopy.crs as ccrs             # a library that supports mapping and projection
+import numpy as np                     # a library that lets us work with arrays; we import this with a new name "np"
+from pathlib import Path               # a library that helps construct system path objects
+import getpass                         # a library to help us enter passwords
+import warnings                        # a library that supports managing warning messages
+import copernicusmarine                # a library to help us access CMEMS data
+from xcube.webapi.viewer import Viewer # a library that provides the Xcube viewer
+
+warnings.filterwarnings("ignore")
+plt.rcParams.update({'font.size': 12})
+
+# set Xcube server if running on WEkEO
+if "WEKEO_DATABROKER_URL" in os.environ:
+    os.environ["XCUBE_JUPYTER_LAB_URL"] = f"https://jupyterhub.prod.wekeo2.eu/user/{os.environ['JUPYTERHUB_USER']}/"
+
+# Flag to download L1/L2 data
+download_l1_l2_data = True
+
+ROI_L2 = [12.8, 13.5, 43.0, 44.5]  # Coordinates: West, East, South, North for a much smaller region including the Po River
+roi_L2 = [
+    [ROI_L2[0], ROI_L2[2]],  # (West, South)
+    [ROI_L2[1], ROI_L2[2]],  # (East, South)
+    [ROI_L2[1], ROI_L2[3]],  # (East, North)
+    [ROI_L2[0], ROI_L2[3]],  # (West, North)
+    [ROI_L2[0], ROI_L2[2]]   # Closing the polygon (West, South)
+]
+
+
+# Defining L2 search times (can adjust as needed)
+start_L2 = datetime.datetime(2024, 8, 10, 9, 0)  # Example start time
+end_L2 = datetime.datetime(2024, 8, 10, 9, 35)    # Example end time
+
+# Collections for Sentinel-2 L1 and L2
+collectionIDs = ['EO:EUM:DAT:0409', 'EO:EUM:DAT:0407']
+
+# Components for L1 and L2 data
+all_components = [
+    ["Oa02_radiance.nc", "Oa06_radiance.nc", "Oa09_radiance.nc", "geo_coordinates.nc"],  # L1 radiance components
+    [
+        "Oa06_reflectance.nc", "Oa08_reflectance.nc", "Oa10_reflectance.nc", "Oa11_reflectance.nc", 
+        "Oa12_reflectance.nc", "Oa18_reflectance.nc", "chl_nn.nc", "chl_oc4me.nc", "geo_coordinates.nc", "wqsf.nc"
+    ]  # L2 reflectance, chlorophyll, and water quality components
+]
+
+# Wavelengths for the selected bands
+lambdas = [665, 681, 709, 753, 885]
+
+# Defining the updated bounding box for L3 (West, East, South, North) for the Gulf of Manfredonia
+ROI_L3 = [12.8, 13.5, 43.0, 44.5]  # Coordinates: West, East, South, North for a much smaller region including the Po River
+roi_L3 = [
+    [ROI_L3[0], ROI_L3[2]],  # (West, South)
+    [ROI_L3[1], ROI_L3[2]],  # (East, South)
+    [ROI_L3[1], ROI_L3[3]],  # (East, North)
+    [ROI_L3[0], ROI_L3[3]],  # (West, North)
+    [ROI_L3[0], ROI_L3[2]]   # Closing the polygon (West, South)
+]
+
+# Defining L3 search times (Operational and Climatological)
+start_oper_L3 = datetime.datetime(2024, 8, 10, 9, 0)  # Operational time range
+end_oper_L3 = datetime.datetime(2024, 8, 10, 9, 30)
+
+start_clim_L3 = datetime.datetime(2017, 1, 1, 0, 0)  # Climatological time range
+end_clim_L3 = datetime.datetime(2024, 12, 31, 23, 59)
+
+# Collections for CMEMS (Copernicus Marine Environment Monitoring Service)
+CMEMS_product = "cmems_obs-oc_bal_bgc-plankton_my_l3-multi-1km_P1D"  # CMEMS L3 product for plankton and biological data
+
+# Variables you are interested in from CMEMS (e.g., Chlorophyll)
+CMEMS_variables = ['CHL']  # Chlorophyll concentration (as an example)
+
+# Create a download directory for our products
+download_dir = os.path.join(os.getcwd(), "products")
+os.makedirs(download_dir, exist_ok=True)
+
+def embellish_plot(m):
+    """Quick function to embellish plots with gridlines and labels
+
+    Args:
+        m (axis): the axis to plot into
+    Returns:
+        None
+    """
+    # Embellish with gridlines
+    m.add_feature(cartopy.feature.NaturalEarthFeature('physical', 'land', '10m', edgecolor='k', facecolor='#546d51', linewidth=0.5), zorder=500)
+    g1 = m.gridlines(draw_labels = True, linestyle='--', linewidth=0.5, zorder=1000)
+    g1.top_labels = g1.right_labels = False
+    g1.xlabel_style = g1.ylabel_style = {'color': '0.5'}
+
+# load credentials
+eumdac_credentials_file = Path(Path.home() / '.eumdac' / 'credentials')
+
+if os.path.exists(eumdac_credentials_file):
+    consumer_key, consumer_secret = Path(eumdac_credentials_file).read_text().split(',')
+else:
+    # creating authentication file
+    consumer_key = input('Enter your consumer key: ')
+    consumer_secret = getpass.getpass('Enter your consumer secret: ')
+    try:
+        os.makedirs(os.path.dirname(eumdac_credentials_file), exist_ok=True)
+        with open(eumdac_credentials_file, "w") as f:
+            f.write(f'{consumer_key},{consumer_secret}')
+    except:
+        pass
+        
+token = eumdac.AccessToken((consumer_key, consumer_secret))
+print(f"This token '{token}' expires {token.expiration}")
+
+datastore = eumdac.DataStore(token)
+
+# list all OLCI collection IDs - if we don't know a priori which collection we are interested in. 
+for collection_id in datastore.collections:
+    if ("OLCI" in collection_id.title):
+        if "non-public" in collection_id.abstract: continue
+        print(f"Collection ID({collection_id}): {collection_id.title}")
+
+selected_collections = []
+for collectionID in collectionIDs:
+    selected_collections.append(datastore.get_collection(collectionID))
+
+all_products = []
+# Note; this polygon can be used directly in the "<geoRegion>" section of a SNAP graph subset node
+polygon = 'POLYGON(({}))'.format(','.join(["{} {}".format(*coord) for coord in roi_L2]))
+for selected_collection in selected_collections:
+    products = selected_collection.search(geo=polygon, dtstart=start_L2, dtend=end_L2)
+    all_products.append(products)
+    for product in products:
+        print(product)
+
+if download_l1_l2_data:
+    downloaded_components = []
+    
+    for collection, products, components in zip(collectionIDs, all_products, all_components):
+    
+        for product, count in zip(products, range(len(products))):
+        
+            product_download_directory = os.path.join(download_dir, str(product))
+            os.makedirs(product_download_directory, exist_ok=True)
+        
+            # download the required product components
+            for entry in product.entries:
+                res = [ele for ele in components if(ele == os.path.basename(entry))]
+                if res:
+                    with product.open(entry=entry) as fsrc, open(os.path.join(product_download_directory, fsrc.name),
+                                                                mode='wb') as fdst:
+                        downloaded_components.append(os.path.join(product_download_directory, fsrc.name))
+                        print(f'Downloading ({count+1}/{len(products)}) {product}: {fsrc.name}.')
+                        shutil.copyfileobj(fsrc, fdst)
+else:
+    downloaded_components = sorted(glob.glob(os.path.join(download_dir, "*", "*.nc")))
+
+#Plotting RGB Images
+
+# select level-1 files
+l1_files = glob.glob(os.path.join(download_dir, '*EFR*', "*.nc"))
+ds_l1 = xr.open_mfdataset(l1_files)
+
+ds_l1
+
+# subset image
+ex = {}
+ey = {}
+mask = {}
+
+ex["l2"], ey["l2"], mask["l2"] = eumartools.subset_image(ds_l1["longitude"], ds_l1["latitude"], [i[0] for i in roi_L2], [i[1] for i in roi_L2])
+ex["l3"], ey["l3"], mask["l3"] = eumartools.subset_image(ds_l1["longitude"], ds_l1["latitude"], [i[0] for i in roi_L3], [i[1] for i in roi_L3])
+
+# load the level-1 image data
+rgb = np.dstack((np.log10(ds_l1["Oa09_radiance"][min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])]),
+                 np.log10(ds_l1["Oa06_radiance"][min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])]),
+                 np.log10(ds_l1["Oa02_radiance"][min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])])))
+ds_l1.close()
+
+# first normalise by channel
+rgb_norm = eumartools.normalise_image(rgb, contrast=[1.15, 1.0, 0.85], unhitch=True)
+# then remove the outliers from the unhitched image
+rgb_trunc = eumartools.truncate_image(rgb_norm)
+# then histogram the truncate image
+rgb_final = eumartools.histogram_image(rgb_trunc, nbins=1024)
+
+fig, ax = plt.subplots(1, 1, figsize=(10, 10), dpi=155)
+ax.imshow(rgb_final)
+ax.title.set_text('Natural colour RGB')
+plt.show()
+
+#Comparing chlorophyl stimates
+
+# select level-2 files
+l2_files = glob.glob(os.path.join(download_dir, '*WFR*', "*.nc"))
+ds_l2 = xr.open_mfdataset(l2_files)
+
+# get flag file
+for l2_file in l2_files:
+    if "wqsf" in l2_file:
+        flag_file = l2_file
+
+# creating masks for CHL_OC4ME: BAC recommended flags
+OC4ME_mask = eumartools.flag_mask(flag_file, 'WQSF', ['LAND', 'CLOUD', 'CLOUD_AMBIGUOUS', 'CLOUD_MARGIN', 
+                                                    'INVALID', 'SATURATED', 'SUSPECT',
+                                                    'HISOLZEN', 'HIGHGLINT', 'SNOW_ICE', 'AC_FAIL',
+                                                    'WHITECAPS', 'ADJAC', 'RWNEG_O2', 'RWNEG_O3',
+                                                    'RWNEG_O4', 'RWNEG_O5', 'RWNEG_O6', 'RWNEG_O7', 'RWNEG_O8',
+                                                    'OC4ME_FAIL'])
+OC4ME_mask = OC4ME_mask.astype(float)
+OC4ME_mask[OC4ME_mask == 1.0] = np.nan
+OC4ME_mask[np.isfinite(OC4ME_mask)] = 1.0
+
+# creating masks for CHL_NN: NN recommended flags
+NN_mask = eumartools.flag_mask(flag_file, 'WQSF', ['LAND', 'CLOUD', 'CLOUD_AMBIGUOUS', 'CLOUD_MARGIN', 
+                                                    'INVALID', 'SATURATED', 'SUSPECT',
+                                                    'HISOLZEN', 'HIGHGLINT', 'SNOW_ICE', 'OCNN_FAIL'])
+NN_mask = NN_mask.astype(float)
+NN_mask[NN_mask == 1.0] = np.nan
+NN_mask[np.isfinite(NN_mask)] = 1.0
+
+CHL_OC4ME = ds_l2["CHL_OC4ME"] * OC4ME_mask
+CHL_NN = ds_l2["CHL_NN"] * NN_mask
+
+fig, axs = plt.subplots(1, 2, figsize=(15, 10), dpi=150, subplot_kw={"projection": ccrs.Mercator()})
+
+for m, chl, label in zip(axs, [CHL_OC4ME, CHL_NN], ['CHL: OC4ME', 'CHL: NN']):
+    
+    p1 = m.pcolormesh(ds_l2["longitude"][min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])],
+                      ds_l2["latitude"][min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])],
+                      chl[min(ey["l2"]):max(ey["l2"]), min(ex["l2"]):max(ex["l2"])],
+                      vmin=-1, vmax=2, transform=ccrs.PlateCarree())
+    embellish_plot(m)
+    m.annotate(label, (0.05, 0.05), xycoords="axes fraction", zorder=1000, color='w')
+
+plt.tight_layout()
+
+cbar = fig.colorbar(p1, ax=axs[:], location='bottom', pad=0.1, aspect=50)
+ticks = [-1, 0, 1, 2]
+cbar.set_ticks(ticks)
+cbar.set_ticklabels([10**tick for tick in ticks])
+cbar.set_label('Chlorophyll concentration [mg.m$^{-3}$]')
+plt.show()
+
+#The maximum peak high chlorophyll (MPH)
+
+MPH_file = "S3A_OL_1_EFR____20230810T092426_20230810T092726_20230811T095735_0179_102_093_2160_PS1_O_NT_003.nc"
+ds_mph = xr.open_dataset(MPH_file)
+
+# creating masks for MPH
+MPH_mask = eumartools.flag_mask(MPH_file, 'quality_flags', ['land', 'bright', 'invalid', 'cosmetic'])
+MPH_mask = MPH_mask.astype(float)
+MPH_mask[MPH_mask == 1.0] = np.nan
+MPH_mask[np.isfinite(MPH_mask)] = 1.0
+
+CHL_MPH = np.log10(ds_mph["chl"]) * MPH_mask
+
+ex["mph"], ey["mph"], dummy_mask = eumartools.subset_image(ds_mph["longitude"], ds_mph["latitude"], [i[0] for i in roi_L2], [i[1] for i in roi_L2])
+ex["l3_mph"], ey["l3_mph"], dummy_mask = eumartools.subset_image(ds_mph["longitude"], ds_mph["latitude"], [i[0] for i in roi_L3], [i[1] for i in roi_L3])
+
+fig, axs = plt.subplots(1, 3, figsize=(15, 10), dpi=150, subplot_kw={"projection": ccrs.Mercator()})
+
+for m, dataset, xy, chl, label in zip(axs, [ds_l2, ds_l2, ds_mph], ["l2", "l2", "mph"], [CHL_OC4ME, CHL_NN, CHL_MPH], ['CHL: OC4ME', 'CHL: NN', 'CHL: MPH']):
+
+    p1 = m.pcolormesh(dataset["longitude"][min(ey[xy]):max(ey[xy]), min(ex[xy]):max(ex[xy])],
+                      dataset["latitude"][min(ey[xy]):max(ey[xy]), min(ex[xy]):max(ex[xy])],
+                      chl[min(ey[xy]):max(ey[xy]), min(ex[xy]):max(ex[xy])],
+                      vmin=-1, vmax=2, transform=ccrs.PlateCarree())
+    embellish_plot(m)
+    m.annotate(label, (0.05, 0.05), xycoords="axes fraction", zorder=1000, color='w')
+
+plt.tight_layout()
+
+cbar = fig.colorbar(p1, ax=axs[:], location='bottom', pad=0.1, aspect=50)
+ticks = [-1, 0, 1, 2]
+cbar.set_ticks(ticks)
+cbar.set_ticklabels([10**tick for tick in ticks])
+cbar.set_label('Chlorophyll concentration [mg.m$^{-3}$]')
+plt.show()
+
+ds_mph.close()
+
+# creating masks for MPH
+MPH_cyano = eumartools.flag_mask(MPH_file, 'mph_chl_flags', ['mph_cyano'])
+MPH_floating = eumartools.flag_mask(MPH_file, 'mph_chl_flags', ['mph_floating'])
+
+fig, axs = plt.subplots(1, 2, figsize=(15, 10), dpi=150, subplot_kw={"projection": ccrs.Mercator()})
+
+for m, mask, label in zip(axs, [MPH_cyano, MPH_floating], ['Cyanobacteria dominated waters (yellow)', 'Floating vegetation (yellow)']):
+    
+    p1 = m.pcolormesh(ds_mph["longitude"][min(ey["mph"]):max(ey["mph"]), min(ex["mph"]):max(ex["mph"])],
+                      ds_mph["latitude"][min(ey["mph"]):max(ey["mph"]), min(ex["mph"]):max(ex["mph"])],
+                      mask[min(ey["mph"]):max(ey["mph"]), min(ex["mph"]):max(ex["mph"])],
+                      vmin=-1, vmax=1, transform=ccrs.PlateCarree())
+    embellish_plot(m)
+    m.annotate(label, (0.05, 0.05), xycoords="axes fraction", zorder=1000, color='k')
+
+plt.tight_layout()
+plt.show()
+
