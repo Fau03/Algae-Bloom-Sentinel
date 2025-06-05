@@ -1,5 +1,5 @@
 
-![Copernicus Logo](https://github.com/user-attachments/assets/eef27875-51c8-44e1-88c3-9b505ae4fcaf =200x200)
+<img src="https://github.com/user-attachments/assets/eef27875-51c8-44e1-88c3-9b505ae4fcaf" style="width: 150px; height: auto;" alt="Copernicus Logo">
 
 This github was created with the codes used for the project "Mapping a Mucilage - Algal bloom event in the Northern Adriatic Sea using the Sentinel Constellation, August 2024" for the course Copernicus green solutions
 of the Politecnico of Milan. 
