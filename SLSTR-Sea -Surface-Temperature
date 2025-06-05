@@ -1,0 +1,204 @@
+import cartopy                          # a library that support mapping
+import datetime                         # a libary that allows us to work with dates and times
+import time                             # a library that gives us the ability to pause a script briefly
+import xarray as xr                     # a library that supports the use of multi-dimensional arrays in Python
+import glob                             # a library that aids in searching for files
+import json                             # a library that helps us make JSON format files
+import numpy as np                      # a library that lets us work with arrays; we import this with a new name "np"
+import os                               # a library that allows us access to basic operating system commands
+import shutil                           # a library that allows us access to basic operating system commands like copy
+import zipfile                          # a library that allows us to unzip zip-files.
+import matplotlib.pyplot as plt         # a library that support plotting
+import matplotlib.ticker as mticker     # a library that extends plotting support
+from shapely.geometry import Polygon    # a library that helps us work with shape objects
+from scipy.interpolate import griddata  # a library that supports irregular grid interpolation
+import xml.etree.ElementTree as ET      # a library that helps us parse XML files
+import eumdac                           # a tool that helps us download via the eumetsat/data-store
+import eumartools                       # a EUMETSAT library that support working with Sentinel-3 products
+from pathlib import Path                # a library that helps construct system path objects
+
+download_dir = os.path.join(os.getcwd(), "products")
+os.makedirs(download_dir, exist_ok=True)
+
+def embellish_plot(m):
+    """Quick function to embellish SLSTR plots with gridlines and labels
+
+    Args:
+        m (axis): the axis to plot into
+    Returns:
+        None
+    """
+    # Embellish with gridlines
+    g1 = m.gridlines(draw_labels = True, zorder=20, color='0.0', linestyle='--',linewidth=0.5)
+    g1.xlocator = mticker.FixedLocator(np.arange(-180, 180, 5))
+    g1.ylocator = mticker.FixedLocator(np.arange(-90, 90, 5))
+    g1.top_labels = False
+    g1.right_labels = False
+    g1.xlabel_style = {'color': 'black'}
+    g1.ylabel_style = {'color': 'black'}
+    m.set(facecolor = "1.0")
+    m.axis('off')
+
+# load credentials
+eumdac_credentials_file = Path(Path.home() / '.eumdac' / 'credentials')
+
+if os.path.exists(eumdac_credentials_file):
+    consumer_key, consumer_secret = Path(eumdac_credentials_file).read_text().split(',')
+else:
+    # creating authentication file
+    consumer_key = input('Enter your consumer key: ')
+    consumer_secret = getpass.getpass('Enter your consumer secret: ')
+    try:
+        os.makedirs(os.path.dirname(eumdac_credentials_file), exist_ok=True)
+        with open(eumdac_credentials_file, "w") as f:
+            f.write(f'{consumer_key},{consumer_secret}')
+    except:
+        pass
+        
+token = eumdac.AccessToken((consumer_key, consumer_secret))
+print(f"This token '{token}' expires {token.expiration}")
+
+datastore = eumdac.DataStore(token)
+
+# set collection ID for SLSTR level-1B
+collectionID = 'EO:EUM:DAT:0411'
+
+# Use collection ID
+selected_collection = datastore.get_collection(collectionID)
+print(f"{selected_collection.title}\n---\n{selected_collection.abstract}")
+
+productID = 'S3B_SL_1_RBT____20220318T075037_20220318T075337_20220319T164550_0179_063_377_3600_MAR_O_NT_004.SEN3'
+selected_product = datastore.get_product(product_id=productID, collection_id=collectionID)
+
+# Download the product
+with selected_product.open() as fsrc, open(os.path.join(download_dir, fsrc.name), mode='wb') as fdst:
+    print(f'Downloading {fsrc.name}')
+    shutil.copyfileobj(fsrc, fdst)
+    print(f'Download of product {fsrc.name} finished.')
+
+# Unzip the product
+with zipfile.ZipFile(fdst.name, 'r') as zip_ref:
+    for file in zip_ref.namelist():
+        if file.startswith(str(selected_product)):
+            zip_ref.extract(file, download_dir)
+    print(f'Unzipping of product {selected_product} finished.')
+
+# Clean up
+os.remove(fdst.name)
+
+# read all the bands from our products: nadir and a-stripe
+solar_channels = [1,2,3,5]
+TIR_channels = [7,9]
+
+# selecting SAFE directory:
+SAFE_directory = os.path.join(os.getcwd(), 'products', 
+    'S3B_SL_1_RBT____20220318T075037_20220318T075337_20220319T164550_0179_063_377_3600_MAR_O_NT_004.SEN3')
+
+# read geodetic grids
+coords_dict = {}
+for coords in ["io", "in", "an"]:
+    coords_file = xr.open_mfdataset(os.path.join(SAFE_directory, f'geodetic_{coords}.nc'))
+    coords_dict[f"longitude_{coords}"] = np.array(coords_file[f"longitude_{coords}"].data)
+    coords_dict[f"latitude_{coords}"] = np.array(coords_file[f"latitude_{coords}"].data)
+    coords_file.close()
+
+# calculate "io" extents for later use
+extents = [np.nanmin(coords_dict["longitude_io"]),
+           np.nanmax(coords_dict["longitude_io"]),
+           np.nanmin(coords_dict["latitude_io"]),
+           np.nanmax(coords_dict["latitude_io"])]
+
+# open data
+band_dict = {}
+
+# read file
+for pattern, bands_needed, flag_file, flag_var in zip(['S*radiance_an.nc', 'S*BT_in.nc', 'S*BT_io.nc'], 
+                                                 [solar_channels, TIR_channels, TIR_channels],
+                                                 ["flags_an.nc", "flags_in.nc", "flags_io.nc"],
+                                                 ["confidence_an", "confidence_in", "confidence_io"]):
+    band_files = glob.glob(os.path.join(SAFE_directory, pattern))
+    band_vars = xr.open_mfdataset(band_files)
+
+    # read variables
+    for band_var in band_vars:
+        band_num = int(band_var.split('_')[0][1])
+        if band_num in bands_needed and "exception" not in band_var and "orphan" not in band_var:
+            print(f"Reading:  {band_var}")
+            band_dict[band_var] = band_vars[band_var].data
+
+    # add flags
+    flag_path = glob.glob(os.path.join(SAFE_directory, flag_file))[0]        
+    print(f"Reading:  {flag_var} (flags)")
+    band_dict[flag_file.replace(".nc","_cloud")] = eumartools.flag_mask(flag_path, 
+                                                                        flag_var, ["summary_cloud"], dtype=np.uint64)
+    band_dict[flag_file.replace(".nc","_ocean")] = eumartools.flag_mask(flag_path, 
+                                                                        flag_var, ["ocean"], dtype=np.uint64)
+    band_dict[flag_file.replace(".nc","_land")]  = eumartools.flag_mask(flag_path, 
+                                                                        flag_var, ["land"], dtype=np.uint64)
+
+# False colour solar channels
+red_recipe = np.array(band_dict['S3_radiance_an'])
+green_recipe = np.array(band_dict['S2_radiance_an'])
+blue_recipe = np.array(band_dict['S1_radiance_an'])
+
+rgb_fsc_321 = np.dstack((red_recipe, green_recipe, blue_recipe))
+rgb_fsc_321 = eumartools.normalise_image(rgb_fsc_321, unhitch=False)
+rgb_fsc_321 = eumartools.truncate_image(rgb_fsc_321, min_percentile=5.0, max_percentile=95.0)
+band_dict["rgb_fsc_321"] = eumartools.histogram_image(rgb_fsc_321, nbins=2048)
+
+# plot S1:S2:S3 RGB and S9 TIR side by side
+fig, axs = plt.subplots(1, 2, figsize=(12, 6), dpi=150)
+axs[0].imshow(band_dict["rgb_fsc_321"])
+axs[0].title.set_text('False colour solar, S3:S2:S1 (day)')
+
+vmin, vmax = [np.nanpercentile(np.array(band_dict['S9_BT_in']), 5),
+              np.nanpercentile(np.array(band_dict['S9_BT_in']), 95)]
+
+c = axs[1].imshow(band_dict['S9_BT_in'], cmap=plt.cm.magma, vmin=vmin, vmax=vmax)
+axs[1].title.set_text('S9 brightness temperature (day)')
+cb_ax = fig.add_axes([axs[1].get_position().x0, 0.10, axs[1].get_position().width, 0.025])
+fig.colorbar(c, cax=cb_ax, orientation="horizontal", label='Brightness temperature [$K$]');
+
+# plot S9 nadir and S9 oblique by side
+fig, axs = plt.subplots(1, 2, figsize=(12, 6), dpi=150, subplot_kw={"projection": cartopy.crs.PlateCarree()})
+titles = ['S9 brightness temperature (nadir)', 'S9 brightness temperature (oblique)']
+labels = ['TOA brightness temperature [$K$]', 'TOA brightness temperature [$K$]']
+views = ['in', 'io']
+
+vmin, vmax = [np.nanpercentile(np.array(band_dict['S9_BT_in']), 5),
+              np.nanpercentile(np.array(band_dict['S9_BT_in']), 95)]
+
+for m, label, title, view in zip(axs, labels, titles, views):
+    c = m.pcolormesh(coords_dict[f"longitude_{view}"],
+                      coords_dict[f"latitude_{view}"],
+                      band_dict[f"S9_BT_{view}"],
+                      transform=cartopy.crs.PlateCarree(central_longitude=0.0),
+                      cmap=plt.cm.Spectral_r, vmin=vmin, vmax=vmax)
+    m.set_extent(extents, crs=cartopy.crs.PlateCarree())
+    m.title.set_text(title)
+    embellish_plot(m)    
+    cb_ax = fig.add_axes([m.get_position().x0, 0.100, m.get_position().width, 0.025])
+    fig.colorbar(c, cax=cb_ax, orientation="horizontal", label=label)
+
+# plot S7 oblique and S9 oblique by side
+fig, axs = plt.subplots(1, 2, figsize=(12, 6), dpi=150, subplot_kw={"projection": cartopy.crs.PlateCarree()})
+titles = ['S7 brightness temperature (oblique)', 'S9 brightness temperature (oblique)']
+labels = ['TOA brightness temperature [$K$]', 'TOA brightness temperature [$K$]']
+bands = ['S7_BT_io', 'S9_BT_io']
+
+for m, label, title, band in zip(axs, labels, titles, bands):
+    
+    vmin, vmax = [np.nanpercentile(np.array(band_dict[band]), 5),
+              np.nanpercentile(np.array(band_dict[band]), 95)]
+
+    c = m.pcolormesh(coords_dict[f"longitude_io"],
+                      coords_dict[f"latitude_io"],
+                      band_dict[band],
+                      transform=cartopy.crs.PlateCarree(central_longitude=0.0),
+                      cmap=plt.cm.magma, vmin=vmin, vmax=vmax)
+    m.set_extent(extents, crs=cartopy.crs.PlateCarree())
+    m.title.set_text(title)
+    embellish_plot(m)    
+    cb_ax = fig.add_axes([m.get_position().x0, 0.100, m.get_position().width, 0.025])
+    fig.colorbar(c, cax=cb_ax, orientation="horizontal", label=label)
+    plt.savefig("Solar_channel_contimination.png", bbox_inches='tight')
