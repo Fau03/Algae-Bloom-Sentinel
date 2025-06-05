@@ -1,3 +1,7 @@
+
+![295955-Copernicus_logo_node_full_image_2](https://github.com/user-attachments/assets/eef27875-51c8-44e1-88c3-9b505ae4fcaf)
+
+
 This github was created with the codes used for the project "Mapping a Mucilage - Algal bloom event in the Northern Adriatic Sea using the Sentinel Constellation, August 2024" for the course Copernicus green solutions
 of the Politecnico of Milan. 
 The results and graph were made using as a interface the annaconda enviroment (using jupyterlabs), Sentinel application platform (SNAP) and the copernicus data ecosystem to download the specific date data (08/10/24 and 08/11/2023). 
