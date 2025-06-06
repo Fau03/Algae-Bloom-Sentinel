@@ -8,15 +8,20 @@
 </p>
 
 
-This github was created with the codes used for the project "Mapping a Mucilage - Algal bloom event in the Northern Adriatic Sea using the Sentinel Constellation, August 2024" for the course Copernicus green solutions
-of the Politecnico of Milan. 
-The results and graph were made using as a interface the annaconda enviroment (using jupyterlabs), Sentinel application platform (SNAP) and the copernicus data ecosystem to download the specific date data (08/10/24 and 08/11/2023). 
-The codes used are modification of the codes at disposition at the EUMESTAT/Copernicus jupyter labs resource disposition (notesamplebookss) from the site (https://documentation.dataspace.copernicus.eu/Usecase.html), with the authors: 
-Copernicus Marine Training Service
-Copyright: 2024 European Union
-License: MIT
-Authors: Ben Loveday (EUMETSAT/Innoflair UG), Gary Corlett (EUMETSAT), Hayley Evers-King (EUMETSAT)
+This GitHub repository was created using the codes developed for the project "Mapping a Mucilage - Algal Bloom Event in the Northern Adriatic Sea Using the Sentinel Constellation, August 2024" for the course Copernicus Green Solutions at the Politecnico di Milano.
 
+The results and graphs were generated using the Anaconda environment (with JupyterLab), the Sentinel Application Platform (SNAP), and the Copernicus Data Ecosystem to download the specific date data (08/10/2024 and 08/11/2023).
+
+The codes used are modifications of the original scripts available on the EUMETSAT/Copernicus Jupyter Labs resources (notebooks) from the site https://documentation.dataspace.copernicus.eu/Usecase.html, with the following authors:
+
+    Copernicus Marine Training Service
+
+    Copyright: 2024 European Union
+
+    License: MIT
+
+    Authors: Ben Loveday (EUMETSAT/Innoflair UG), Gary Corlett (EUMETSAT), Hayley Evers-King (EUMETSAT)
+    
 Data and jupyternotebooks disposition: 
 https://dataspace.copernicus.eu/
 https://dataspace.copernicus.eu/analyse/jupyterlab
